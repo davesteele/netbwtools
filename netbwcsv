@@ -4,16 +4,13 @@ import argparse
 import subprocess
 import sys
 import re
-import calendar
 import time
-import datetime
+from datetime import datetime
+from datetime import timedelta
 from collections import namedtuple
-from multiprocessing import Process, Queue
 
 PointParam = namedtuple('PointParam',
                         ['device', 'ipaddr', 'community', 'direction'])
-
-class KeyboardInterruptError(Exception): pass
 
 
 class MonPoint(object):
@@ -40,7 +37,7 @@ class MonPoint(object):
 
         try:
             output = subprocess.check_output(cmd.split()).decode()
-        except CalledProcessError:
+        except subprocess.CalledProcessError:
             print(u"Error calling snmpwalk")
             sys.exit(1)
 
@@ -90,12 +87,6 @@ class MonPoint(object):
     def get_reading(self):
         return int(self.snmpwalk(self._get_oid()).split()[-1])
 
-    def get_delta(self):
-        reading = self.get_reading()
-        delta = reading - self.last
-        self.last = reading
-
-        return delta
 
 def parse_monpoint(arg):
     vals = arg.split(':')
@@ -118,74 +109,56 @@ def parse_monpoint(arg):
 
     return PointParam(dev, ipaddr, community, direction)
 
+
 def parse_args():
     parser = argparse.ArgumentParser(
-                description="Monitor traffic at network endpoints",
-                epilog="Query the device using SNMP, and output the results "
-                       "in CSV format."
-                       "\n"
-                       "The device may be specified by name or by SNMP index "
-                       "(the last digit in the monitoring OID)."
-        )
+        description="Monitor traffic at network endpoints",
+        epilog="Query the device using SNMP, and output the results "
+               "in CSV format."
+               "\n"
+               "The device may be specified by name or by SNMP index "
+               "(the last digit in the monitoring OID)."
+    )
 
-    parser.add_argument('monpoints',
-                help="Monitoring point. "
-                     "Device defaults to 'eth0'. "
-                     "The SNMP community defaults to 'public'. "
-                     "Direction is 'in' or 'out' (default 'in')",
-                metavar="ipaddr[:device[:community[:direction]]]",
-                default='',
-                nargs='+',
-        )
+    parser.add_argument(
+        'monpoints',
+        help="Monitoring point. "
+             "Device defaults to 'eth0'. "
+             "The SNMP community defaults to 'public'. "
+             "Direction is 'in' or 'out' (default 'in')",
+        metavar="ipaddr[:device[:community[:direction]]]",
+        default='',
+        nargs='+',
+    )
 
-    parser.add_argument('-b', '--bps',
-                help="output the rate in bits/second (default is bytes/sec)",
-                default=False,
-                action='store_true',
-                required=False,
-        )
+    parser.add_argument(
+        '-b', '--bps',
+        help="output the rate in bits/second (default is bytes/sec)",
+        default=False,
+        action='store_true',
+        required=False,
+    )
 
-    parser.add_argument('-d', '--delay',
-                help="delay between samples (default is 5 seconds)",
-                metavar="SEC",
-                default=5,
-                type=int,
-                required=False,
-        )
+    parser.add_argument(
+        '-d', '--delay',
+        help="delay between samples (default is 5 seconds)",
+        metavar="SEC",
+        default=5,
+        type=int,
+        required=False,
+    )
 
-    parser.add_argument('-l', '--list-devices',
-                help="just list the devices on the node, and exit",
-                action='store_true',
-                default=False,
-                required=False,
-        )
+    parser.add_argument(
+        '-l', '--list-devices',
+        help="just list the devices on the node, and exit",
+        action='store_true',
+        default=False,
+        required=False,
+    )
 
     args = parser.parse_args()
 
-    args.parsedpoints = [parse_monpoint(x) for x in args.monpoints]
-
     return args
-
-def tasker(monpoints, delay, taskq, resultq):
-    try:
-        while True:
-            time.sleep(delay)
-            now = calendar.timegm(time.gmtime())
-            now = datetime.datetime.now()
-            taskq.put( (now, monpoints)  )
-    except KeyboardInterrupt:
-        raise KeyboardInterruptError()
-
-def worker(taskq, resultq):
-    try:
-        while True:
-            timestamp, monpoints = taskq.get()
-
-            result = [x.get_reading() for x in monpoints]
-
-            resultq.put( (timestamp, monpoints, result) )
-    except KeyboardInterrupt:
-        raise KeyboardInterruptError()
 
 
 if __name__ == '__main__':
@@ -199,37 +172,29 @@ if __name__ == '__main__':
             print(point.name, ':', [x for x in point._devmap()])
         sys.exit(0)
 
+    checktime = datetime.now() + timedelta(seconds=args.delay)
     last = [x.get_reading() for x in monpoints]
-
-    taskq = Queue()
-    resultq = Queue()
-
-    taskproc = Process(target=tasker, args=(monpoints, args.delay, taskq, resultq))
-    taskproc.start()
-
-    workproc = Process(target=worker, args=(taskq, resultq))
-    workproc.start()
 
     while True:
         try:
-            time.sleep(args.delay * 0.9)
-            timestamp, monpoints, results = resultq.get(True, args.delay * 5)
+            delay = (checktime - datetime.now()).total_seconds()
+            if delay > 0:
+                time.sleep(delay)
 
-            rates = [int((x[0]-x[1])/(1.0 * args.delay)) for x in zip(results, last)]
+            results = [x.get_reading() for x in monpoints]
+
+            rates = [int((x[0]-x[1])/(1.0 * args.delay))
+                     for x in zip(results, last)]
             if args.bps:
                 rates = [x*8 for x in rates]
 
-            csvline = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+            csvline = checktime.strftime("%Y-%m-%d %H:%M:%S")
             csvline += ", "
             csvline += ", ".join(["{0}".format(x) for x in rates])
             print(csvline)
 
             last = results
+
+            checktime += timedelta(seconds=args.delay)
         except KeyboardInterrupt:
-            taskproc.terminate()
-            workproc.terminate()
-            taskproc.join()
-            workproc.join()
-
-
-
+            sys.exit(0)
