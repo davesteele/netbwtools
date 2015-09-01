@@ -1,0 +1,235 @@
+#!/usr/bin/python3
+
+import argparse
+import subprocess
+import sys
+import re
+import calendar
+import time
+import datetime
+from collections import namedtuple
+from multiprocessing import Process, Queue
+
+PointParam = namedtuple('PointParam',
+                        ['device', 'ipaddr', 'community', 'direction'])
+
+class KeyboardInterruptError(Exception): pass
+
+
+class MonPoint(object):
+    """Define a network monitoring point"""
+
+    def __init__(self, name, params):
+        """Expected params are ip, version, direction, community, device"""
+
+        self.name = name
+
+        self.ip = params.ipaddr
+        self.device = params.device
+        self.community = params.community
+        self.direction = params.direction
+        self.version = '1'
+
+        self.oid = None
+
+    def snmpwalk(self, oid):
+        cmd = "snmpwalk -v {3} -c {2} {0} {1}".format(self.ip,
+                                                      oid,
+                                                      self.community,
+                                                      self.version)
+
+        try:
+            output = subprocess.check_output(cmd.split()).decode()
+        except CalledProcessError:
+            print(u"Error calling snmpwalk")
+            sys.exit(1)
+
+        return output
+
+    def _devtuple(self, line):
+        """Convert snmpwalk ifDescr line to e.g. ('eth0', '4')"""
+
+        tokens = line.split()
+        if tokens:
+            return((tokens[-1], tokens[0].split('.')[-1]))
+        else:
+            return None
+
+    def _devmap(self):
+        """Create dict mapping from network device to IF-MIB index"""
+
+        lines = self.snmpwalk(u'.1.3.6.1.2.1.2.2.1.2').splitlines()
+        return dict(y for y in [self._devtuple(x) for x in lines] if y)
+
+    def _devid(self):
+        if re.search('^[0-9]+$', self.device):
+            return self.device
+        else:
+            try:
+                return self._devmap()[self.device]
+            except AttributeError:
+                print(u'Device {0} not found'.format(self.device))
+                sys.exit(1)
+
+    def _get_oid(self):
+        """Determine the OID for the in/outOctets"""
+
+        if self.oid:
+            return self.oid
+
+        if self.direction == 'in':
+            dirnum = u'10'
+        else:
+            dirnum = u'16'
+
+        mibbase = u'.1.3.6.1.2.1.2.2.1'
+        self.oid = u'%s.%s.%s' % (mibbase, dirnum, self._devid())
+
+        return self.oid
+
+    def get_reading(self):
+        return int(self.snmpwalk(self._get_oid()).split()[-1])
+
+    def get_delta(self):
+        reading = self.get_reading()
+        delta = reading - self.last
+        self.last = reading
+
+        return delta
+
+def parse_monpoint(arg):
+    vals = arg.split(':')
+    ipaddr = vals[0]
+
+    if len(vals) > 1:
+        dev = vals[1]
+    else:
+        dev = 'eth0'
+
+    if len(vals) > 2:
+        community = vals[2]
+    else:
+        community = 'public'
+
+    if len(vals) > 3:
+        direction = vals[3]
+    else:
+        direction = 'in'
+
+    return PointParam(dev, ipaddr, community, direction)
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+                description="Monitor traffic at network endpoints",
+                epilog="Query the device using SNMP, and output the results "
+                       "in CSV format."
+                       "\n"
+                       "The device may be specified by name or by SNMP index "
+                       "(the last digit in the monitoring OID)."
+        )
+
+    parser.add_argument('monpoints',
+                help="Monitoring point. "
+                     "Device defaults to 'eth0'. "
+                     "The SNMP community defaults to 'public'. "
+                     "Direction is 'in' or 'out' (default 'in')",
+                metavar="ipaddr[:device[:community[:direction]]]",
+                default='',
+                nargs='+',
+        )
+
+    parser.add_argument('-b', '--bps',
+                help="output the rate in bits/second (default is bytes/sec)",
+                default=False,
+                action='store_true',
+                required=False,
+        )
+
+    parser.add_argument('-d', '--delay',
+                help="delay between samples (default is 5 seconds)",
+                metavar="SEC",
+                default=5,
+                type=int,
+                required=False,
+        )
+
+    parser.add_argument('-l', '--list-devices',
+                help="just list the devices on the node, and exit",
+                action='store_true',
+                default=False,
+                required=False,
+        )
+
+    args = parser.parse_args()
+
+    args.parsedpoints = [parse_monpoint(x) for x in args.monpoints]
+
+    return args
+
+def tasker(monpoints, delay, taskq, resultq):
+    try:
+        while True:
+            time.sleep(delay)
+            now = calendar.timegm(time.gmtime())
+            now = datetime.datetime.now()
+            taskq.put( (now, monpoints)  )
+    except KeyboardInterrupt:
+        raise KeyboardInterruptError()
+
+def worker(taskq, resultq):
+    try:
+        while True:
+            timestamp, monpoints = taskq.get()
+
+            result = [x.get_reading() for x in monpoints]
+
+            resultq.put( (timestamp, monpoints, result) )
+    except KeyboardInterrupt:
+        raise KeyboardInterruptError()
+
+
+if __name__ == '__main__':
+
+    args = parse_args()
+
+    monpoints = [MonPoint(x, parse_monpoint(x)) for x in args.monpoints]
+
+    if args.list_devices:
+        for point in monpoints:
+            print(point.name, ':', [x for x in point._devmap()])
+        sys.exit(0)
+
+    last = [x.get_reading() for x in monpoints]
+
+    taskq = Queue()
+    resultq = Queue()
+
+    taskproc = Process(target=tasker, args=(monpoints, args.delay, taskq, resultq))
+    taskproc.start()
+
+    workproc = Process(target=worker, args=(taskq, resultq))
+    workproc.start()
+
+    while True:
+        try:
+            time.sleep(args.delay * 0.9)
+            timestamp, monpoints, results = resultq.get(True, args.delay * 5)
+
+            rates = [int((x[0]-x[1])/(1.0 * args.delay)) for x in zip(results, last)]
+            if args.bps:
+                rates = [x*8 for x in rates]
+
+            csvline = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+            csvline += ", "
+            csvline += ", ".join(["{0}".format(x) for x in rates])
+            print(csvline)
+
+            last = results
+        except KeyboardInterrupt:
+            taskproc.terminate()
+            workproc.terminate()
+            taskproc.join()
+            workproc.join()
+
+
+
