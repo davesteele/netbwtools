@@ -192,6 +192,7 @@ if __name__ == '__main__':
             csvline += ", "
             csvline += ", ".join(["{0}".format(x) for x in rates])
             print(csvline)
+            sys.stdout.flush()
 
             last = results
 
