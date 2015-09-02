@@ -29,6 +29,9 @@ class MonPoint(object):
 
         self.oid = None
 
+    def devname(self):
+        return ':'.join([self.ip, self.device, self.direction])
+
     def snmpwalk(self, oid):
         cmd = "snmpwalk -v {3} -c {2} {0} {1}".format(self.ip,
                                                       oid,
@@ -171,6 +174,9 @@ if __name__ == '__main__':
         for point in monpoints:
             print(point.name, ':', [x for x in point._devmap()])
         sys.exit(0)
+
+    hdrline = ', '.join(['time'] + [m.devname() for m in monpoints])
+    print(hdrline)
 
     checktime = datetime.now() + timedelta(seconds=args.delay)
     last = [x.get_reading() for x in monpoints]
