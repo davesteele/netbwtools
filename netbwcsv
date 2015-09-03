@@ -17,17 +17,15 @@ class MonPoint(object):
     """Define a network monitoring point"""
 
     def __init__(self, name, params):
-        """Expected params are ip, version, direction, community, device"""
+        """Expected params are ip, direction, community, device"""
 
         self.name = name
-
-        self.ip = params.ipaddr
-        self.device = params.device
-        self.community = params.community
-        self.direction = params.direction
+        self.params = params
         self.version = '1'
-
         self.oid = None
+
+    def __getattr__(self, name):
+        return self.params.__getattribute__(name)
 
     def devname(self):
         return ':'.join([self.ip, self.device, self.direction])
