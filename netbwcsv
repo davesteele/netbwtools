@@ -10,7 +10,7 @@ from datetime import timedelta
 from collections import namedtuple
 
 PointParam = namedtuple('PointParam',
-                        ['device', 'ipaddr', 'community', 'direction'])
+                        ['device', 'ip', 'community', 'direction', 'version'])
 
 
 class MonPoint(object):
@@ -21,7 +21,6 @@ class MonPoint(object):
 
         self.name = name
         self.params = params
-        self.version = '1'
         self.oid = None
 
     def __getattr__(self, name):
@@ -72,16 +71,14 @@ class MonPoint(object):
     def _get_oid(self):
         """Determine the OID for the in/outOctets"""
 
-        if self.oid:
-            return self.oid
+        if self.oid is None:
+            if self.direction == 'in':
+                dirnum = u'10'
+            else:
+                dirnum = u'16'
 
-        if self.direction == 'in':
-            dirnum = u'10'
-        else:
-            dirnum = u'16'
-
-        mibbase = u'.1.3.6.1.2.1.2.2.1'
-        self.oid = u'%s.%s.%s' % (mibbase, dirnum, self._devid())
+            mibbase = u'.1.3.6.1.2.1.2.2.1'
+            self.oid = u'%s.%s.%s' % (mibbase, dirnum, self._devid())
 
         return self.oid
 
@@ -108,7 +105,7 @@ def parse_monpoint(arg):
     else:
         direction = 'in'
 
-    return PointParam(dev, ipaddr, community, direction)
+    return PointParam(dev, ipaddr, community, direction, 1)
 
 
 def parse_args():
