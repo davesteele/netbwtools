@@ -26,8 +26,11 @@ class MonPoint(object):
     def __getattr__(self, name):
         return self.params.__getattribute__(name)
 
-    def devname(self):
-        return ':'.join([self.ip, self.device, self.direction])
+    def devname(self, title):
+        if title:
+            return '"' + title + '"'
+        else:
+            return ':'.join([self.ip, self.device, self.direction])
 
     def snmpwalk(self, oid):
         cmd = "snmpwalk -v {3} -c {2} {0} {1}".format(self.ip,
@@ -154,6 +157,15 @@ def parse_args():
         required=False,
     )
 
+    parser.add_argument(
+        '-t', '--title',
+        help="title for the csv data column",
+        metavar="TITLE",
+        default="",
+        type=str,
+        required=False,
+    )
+
     args = parser.parse_args()
 
     return args
@@ -170,7 +182,7 @@ if __name__ == '__main__':
             print(point.name, ':', [x for x in point._devmap()])
         sys.exit(0)
 
-    hdrline = ', '.join(['time'] + [m.devname() for m in monpoints])
+    hdrline = ', '.join(['time'] + [m.devname(args.title) for m in monpoints])
     print(hdrline)
 
     checktime = datetime.now() + timedelta(seconds=args.delay)
