@@ -185,7 +185,9 @@ if __name__ == '__main__':
     hdrline = ', '.join(['time'] + [m.devname(args.title) for m in monpoints])
     print(hdrline)
 
-    checktime = datetime.now() + timedelta(seconds=args.delay)
+    lasttime = datetime.now()
+    checktime = lasttime + timedelta(seconds=args.delay)
+    checktime -= timedelta(seconds = checktime.second % args.delay)
     last = [x.get_reading() for x in monpoints]
 
     while True:
@@ -196,7 +198,7 @@ if __name__ == '__main__':
 
             results = [x.get_reading() for x in monpoints]
 
-            rates = [int((x[0]-x[1])/(1.0 * args.delay))
+            rates = [int((x[0]-x[1])/(1.0 * (checktime - lasttime).seconds))
                      for x in zip(results, last)]
             if args.bps:
                 rates = [x*8 for x in rates]
@@ -209,6 +211,7 @@ if __name__ == '__main__':
 
             last = results
 
+            lasttime = checktime
             checktime += timedelta(seconds=args.delay)
         except KeyboardInterrupt:
             sys.exit(0)
