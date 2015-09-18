@@ -1,0 +1,73 @@
+#!/usr/bin/python
+
+import sys
+import csv
+import argparse
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Combine netbwcsv CSV files",
+        epilog="Combines CSV files from netbwcsv output into a single "
+               "spreadsheet, with a common time base and separate columns "
+               "for each data series. Output is to stdout."
+    )
+
+    parser.add_argument(
+        'csvfiles',
+        help="A netbwcsv CSV file to be incorporated.",
+        metavar="file.csv",
+        default='',
+        nargs='+',
+    )
+
+    return parser.parse_args()
+
+
+class Series(object):
+    def __init__(self, title):
+        self.title = title.strip(" '\"")
+        self.data = {}
+
+    def add_val(self, date, val):
+        self.data[date] = val
+
+    def dates(self):
+        return [x for x in self.data]
+
+    def get_val(self, date):
+        try:
+            return self.data[date]
+        except KeyError:
+            return None
+
+
+def get_series(file):
+    with open(file, 'rb') as csvfile:
+        csvreader = csv.reader(csvfile)
+
+        hdr = csvreader.next()
+
+        serieses = [Series(x) for x in hdr[1:]]
+
+        for row in csvreader:
+            date = row[0]
+            for series, val in zip(serieses, row[1:]):
+                series.add_val(date, val)
+
+        return serieses
+
+
+if __name__ == '__main__':
+    args = parse_args()
+
+    serieses = reduce(lambda x, y: x+y, [get_series(z) for z in args.csvfiles])
+
+    dates = reduce(lambda y, z: y | z, [set(x.dates()) for x in serieses])
+
+    csvwriter = csv.writer(sys.stdout)
+    csvwriter.writerow(['time'] + [x.title for x in serieses])
+
+    for date in sorted(dates):
+        linevals = [date] + [x.get_val(date) for x in serieses]
+        csvwriter.writerow(linevals)

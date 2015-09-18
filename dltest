@@ -1,0 +1,40 @@
+#!/bin/bash
+
+dltest () {
+    name=$1
+    port=$2
+    delay=$3
+    cmd=$4
+
+    netbwcsv $port -b -d $delay -t $name >> $name.csv &
+    pid=$!
+
+    sleep 5
+    $cmd
+    sleep 5
+
+    kill -TERM $pid
+    wait $pid 2> /dev/null
+}
+
+
+# If it looks like we have been called with enough arguments, then
+# call dltest. Otherwise, print usage.
+
+if [ $# == 4 ] ; then
+    dltest "$1" "$2" "$3" "$4"
+else
+    cat <<EOF
+$0
+
+Usage: $0 <testname> <snmp_port> <delay> <net_cmd>
+
+This creates a CSV file named <testname>.csv, with columns for time (separated
+by <delay> seconds) and bandwidth on <snmp_port>, in bits/second.
+
+The format for <snmp_port> is as defined by 'netbwcsv'. <net_cmd> is a data
+consuming command - for instance 'scp user@host:path .'.
+EOF
+fi
+
+
