@@ -167,3 +167,8 @@ time | google1 | google2
 2015-09-18 11:50:37 |  |  744
 2015-09-18 11:50:38 |  |  0
 2015-09-18 11:50:39 |  |  0
+
+This can be charted in a spreadsheet as an X-Y plot, with the following
+results:
+
+![image](https://raw.githubusercontent.com/davesteele/netbwtools/master/images/chart.png)
